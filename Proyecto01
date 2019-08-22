@@ -1,0 +1,963 @@
+Proyecto SalesForce 01
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+CaseClases
+----------
+public class CasesClass {
+    
+    //Este método devuelve el nombre del perfil que tenga asociado el usuario actual
+    @AuraEnabled
+    public static String getCurrentUserProfile(){
+        Id profileId = userinfo.getProfileId();
+        return [Select Name from Profile where Id=:profileId].Name;
+    }
+    
+    //Este método nos devolverá el RecordTypeID asociado al RecordType.Name que le pasemos por parámetro 
+    @AuraEnabled
+    public static String getRecordTipeID(String recordTypeName){
+        return Schema.SObjectType.Case.getRecordTypeInfosByName().get(recordTypeName).getRecordTypeId();
+    }
+    
+    //Este método será el que carge los datos de la base de datos cuando cargue el componente por primera vez
+    @AuraEnabled
+    public static List<Case> getCases(){
+        
+        return [SELECT Id, CaseNumber, Close_Date__c, Days_to_close__c, CreatedDate, Type, Status, Priority FROM Case ORDER BY Close_Date__c LIMIT 10];
+        
+    }
+    
+    //Esta clase será la que muestre los datos filtrados según los parámetros que indiquemos en el caseHeader
+    @AuraEnabled
+    public static List<Case> getCases2(String csNumber, String csType, String csStatus, String csPriority){
+        
+        String stringCaseNumber = '';
+        
+        if(csNumber != ''){
+            stringCaseNumber = 'WHERE CaseNumber LIKE \'%'+ csNumber + '%\'';
+        }
+        
+        if(csType != 'Todos'){
+            if(csNumber != ''){
+                csType = ' AND Type = \'' + csType + '\'';
+            }else{
+                csType = ' WHERE Type = \'' + csType + '\'';
+            }	
+        }else{
+            csType = '';
+        }
+        
+        if(csStatus != 'Todos'){
+            if(csNumber != '' || csType != ''){
+                csStatus = ' AND Status = \'' + csStatus + '\'';
+            }else{
+                csStatus = ' WHERE Status = \'' + csStatus + '\'';
+            }
+        }else{
+            csStatus = '';
+        }
+        
+        if(csPriority != 'Todos'){
+            if(csNumber != '' || csType != ''|| csStatus != ''){
+                csPriority = ' AND Priority = \'' + csPriority + '\'';
+            }else{
+                csPriority = ' WHERE Priority = \'' + csPriority + '\'';
+            }
+        }else{ 
+            csPriority = '';
+        }
+        
+        String CaseQuery = 'SELECT Id, CaseNumber, Close_Date__c, Days_to_close__c, Type, Status, Priority '+ 
+            'FROM Case ' + stringCaseNumber + csType + csStatus + csPriority + ' ORDER BY Close_Date__c LIMIT 10';
+        
+        return database.query(CaseQuery);
+    }
+    
+    //Los siguientes métodos obtienen todos los valores de Type, Status y Priority que haya almacenados en el objeto Case
+    
+    @AuraEnabled
+    public static List<String> getTypes(){
+        List<String> optionlist = new List<String>();
+        
+        Map<String,Schema.SObjectType> gd = Schema.getGlobalDescribe(); 
+        Map<String, Schema.SObjectField> field_map = gd.get('Case').getDescribe().fields.getMap(); 
+        
+        List<Schema.PicklistEntry> picklistValues = field_map.get('Type').getDescribe().getPickListValues();
+        
+        for (Schema.PicklistEntry pv : picklistValues) {
+            optionlist.add(pv.getValue());
+        }
+        return optionlist;
+    }
+    
+    @AuraEnabled
+    public static List<String> getStatus(){
+        List<String> optionlist = new List<String>();
+        
+        Map<String,Schema.SObjectType> gd = Schema.getGlobalDescribe(); 
+        Map<String, Schema.SObjectField> field_map = gd.get('Case').getDescribe().fields.getMap(); 
+        
+        List<Schema.PicklistEntry> picklistValues = field_map.get('Status').getDescribe().getPickListValues();
+        
+        for (Schema.PicklistEntry pv : picklistValues) {
+            optionlist.add(pv.getValue());
+        }
+        return optionlist;
+    }
+    
+    @AuraEnabled
+    public static List<String> getPriority(){
+        List<String> optionlist = new List<String>();
+        
+        Map<String,Schema.SObjectType> gd = Schema.getGlobalDescribe(); 
+        Map<String, Schema.SObjectField> field_map = gd.get('Case').getDescribe().fields.getMap(); 
+        
+        List<Schema.PicklistEntry> picklistValues = field_map.get('Priority').getDescribe().getPickListValues();
+        
+        for (Schema.PicklistEntry pv : picklistValues) {
+            optionlist.add(pv.getValue());
+        }
+        return optionlist;
+    }
+    
+    @AuraEnabled
+    public static void updateCase(Case cs){
+        try { 
+            upsert cs;
+        } catch(DmlException e) {
+            System.debug('ERROR: ' + e.getMessage());
+        }
+    }
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+Last10CaseClosed.cmp
+----------------
+<aura:component implements="flexipage:availableForAllPageTypes" access="global" controller="CasesClass">
+    
+    <!--Creamos la lista de casos donde se almacenarán todos los casos que recopilemos desde
+   la base de datos-->
+    <aura:attribute name="inicial" type="List"/>
+    <aura:attribute name="caseRows" type="Case[]"/>
+    
+    <!--Con el handler, hacemos una llamada al controller, desde la cual obtendremos las
+   incidencias de la base de datos-->
+    <aura:handler name="init" action="{!c.doInit}" value="{!this}"/>
+    
+    <aura:handler event="c:caseEvent" action="{!c.getCaseEvent}"/>
+
+    <!--Dibujamos una tabla donde se mostraran los datos-->
+    <table class="slds-table slds-table_bordered slds-table_striped slds-table_cell-buffer ">
+        <thead>
+            
+            <!--Definimos el nombre de cada columna de la tabla-->
+            <tr class="slds-text-heading_label">
+                <th scope="col"><div class="slds-col slds-size_1-of-6" title="#">#</div></th>
+                <th scope="col"><div class="slds-col slds-size_2-of-6" title="Case Number">Case Number</div></th>
+                <th scope="col"><div class="slds-col slds-size_2-of-6" title="Close Date">Close Date</div></th>
+                <th scope="col"><div class="slds-col slds-size_1-of-6" title="Close Date">Actions</div></th>
+            </tr>
+        </thead>
+        
+        <tbody>
+            
+            <!--Iteramos la lista de incidencias para mostrar una por una cada incidencia-->
+            <aura:iteration items="{!v.caseRows}" var="cas" indexVar="index">
+                <tr>
+                    <td><div>
+                        
+                        <!--Comprobamos el número de dias que quedan para que se cierre la incidencia.
+           				Dependiendo de los días que queden, el icono asociado a dicha incidencia 
+           				será verde, amarillo o rojo-->
+                        <aura:if isTrue="{!greaterthan(cas.Days_to_close__c,3)}">
+                            <lightning:icon style="background-color:#2cba0a" iconName="standard:all"/>
+                        </aura:if>
+                        <aura:if isTrue="{!and(lessthanorequal(cas.Days_to_close__c,3),greaterthan(cas.Days_to_close__c,1))}">
+                            <lightning:icon style="background-color:#e9f00f" iconName="standard:all"/>
+                        </aura:if>
+                        <aura:if isTrue="{!lessthanorequal(cas.Days_to_close__c,1)}">
+                            <lightning:icon style="background-color:#f00f0f" iconName="standard:all"/>
+                        </aura:if>                          
+                        
+                        <!--Junto al icono, mostramos el número de inciendia y la fecha de cierre asociada-->
+                        </div></td>
+                    <td><div class="slds-truncate" title="{!cas.CaseNumber}">{!cas.CaseNumber}</div></td>
+                    <td><div class="slds-truncate" title="{!cas.ClosedDate}">{!cas.Close_Date__c}</div></td>
+                    <td>
+                        
+                        <p>
+                            <c:caseItem item ="{!cas}"/>
+                            </p>
+                    </td>
+                </tr>
+                
+            </aura:iteration>
+        </tbody>
+    </table>
+    
+</aura:component>
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+Last10CaseClosedController.js
+----------------
+({
+    //Creamos el controller asociado a la clase Apex para que nos devuelva los datos de 
+    //Salesforce. Obtenemos una referencia al método remoto getCases de nuestra
+    //clase Apex, y hacemos la llamada al Callback. Si todo sale bien, añade a la
+    //lista que creamos en el componente el resultado del método getCases, o sea,
+    //las 10 incidencias ordenadas por fecha de cierre.
+    doInit: function(component, event, helper) {
+        var action = component.get("c.getCases");
+        action.setCallback(this, function(response) {
+            var state = response.getState();
+            if (state === "SUCCESS") {
+                component.set("v.caseRows",response.getReturnValue());
+            }
+        });
+        $A.enqueueAction(action);
+    },
+    
+    //Aquí recogemos el evento cuando pulsamos el botón de buscar. Recogemos con el handler del componente los parámetros
+    //que le pasamos desde el formulario y asociamos los datos al método getCases2 de nuestra clase Apex para que haga las 
+    //consultas correspondientes y devuelva los resultados. En caso de que no encuentre ningun caso que contenga los parámetros
+    //que hemos introducido, mostrará un mensaje de alerta en pantalla (y la tabla no aparecerá vacía, sino que mantendrá los que tuviera
+    //antes)
+    getCaseEvent: function(component, event, helper) {
+        var newSearch = event.getParam("caseEvent");
+        var action = component.get("c.getCases2");
+        
+        action.setParams({
+            csNumber: newSearch[0],
+            csType: newSearch[1],
+            csStatus: newSearch[2],
+            csPriority: newSearch[3]
+        });
+        action.setCallback(this, function(response) {
+            var state = response.getState();
+            if(response.getReturnValue().length == 0){
+                    alert("No se han encontrado casos con los parámetros introducidos");
+                }
+            else if (state === "SUCCESS") {
+                component.set("v.caseRows",response.getReturnValue());
+                console.log(response.getReturnValue());
+            }
+        });
+        $A.enqueueAction(action);
+    },
+    
+     showDetails: function(component, event, helper) {
+        var cmpTarget = component.find('Modalbox');
+        var cmpBack = component.find('Modalbackdrop');
+                 console.log("rr"+component.find('Modalbackdrop'));
+        $A.util.addClass(cmpTarget, 'slds-fade-in-open');
+        $A.util.addClass(cmpBack, 'slds-backdrop--open'); 
+    },
+    
+    //Boton para cerrar el Pop-up
+    closeDetails : function(component, event, helper) {
+        
+        var cmpTarget = component.find('Modalbox');
+        var cmpBack = component.find('Modalbackdrop');
+        $A.util.removeClass(cmpBack,'slds-backdrop--open');
+        $A.util.removeClass(cmpTarget, 'slds-fade-in-open');
+    }
+})
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+caseEvent.ev
+----------------
+<aura:event type="APPLICATION" description="Event template">
+	<aura:attribute name="caseEvent" type="String[]"/>
+</aura:event>
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+caseHeader.cmp
+----------------
+<aura:component implements="flexipage:availableForAllPageTypes" access="global" controller="CasesClass">
+    
+    <!--Declaramos los atributos que vamos a utilizar en el componente del Header. En este
+   	caso, cogemos por separado el número de caso (CaseName1) y las listas de Type, Status
+  	y Priority. En el caso del Record Type, creamos dos atributos, uno para obtener el ID y
+  	otro para mostrar el nombre. Estos dos se asociarán más adelante-->    
+    <aura:attribute name="CaseName1" type="String" default=''/>
+    <aura:attribute name="CaseType" type="String[]"/>
+    <aura:attribute name="CaseStatus" type="String[]"/>
+    <aura:attribute name="CasePriority" type="String[]"/>
+    <aura:attribute name="caseRecordTypeID" type="String"/>
+    <aura:attribute name="currentUserProfile" type="String"/>
+    <aura:attribute name="CaseRecordType" type="List" default="[{'label': 'Company', 'value': 'Company'},
+                                                               {'label': 'Particular', 'value': 'Particular'}
+                                                               ]"/>
+    
+    <!--Definimos también otro atributo que usaremos para obtener qué RecordType tenemos
+  	seleccionado en el primer Pop-Up -->
+    <aura:attribute name="CaseRecordTypeValue" type="String" default="Company"/>
+    
+    <!--El handler doInit hará uso del Controller para traer los datos necesarios de la
+  	base de datos-->
+    <aura:handler name="init" action="{!c.doInit}" value="{!this}"/>
+    
+    <!--Con el registerEvent, enviaremos el evento de pulsar en el botón Buscar.-->
+    <aura:registerEvent name="findCase" type="c:caseEvent"/>
+    
+    <!--Le aplicamos un estilo slds-->
+    <fieldset class="slds-box slds-theme--default ">
+        
+        <!--Creamos los recuadros donde escribir el Número de caso y donde elegir
+    	el Type, Status y Priority -->
+        <lightning:input type="number"
+                         name="inputCaseNumber" 
+                         label="Número de caso" 
+                         placeholder="Introduce un número de caso"
+                         value="{!v.CaseName1}"/>
+        
+        <lightning:layout horizontalAlign="center">
+            <lightning:layoutItem>
+                <lightning:select name="selectType" 
+                                  label="Tipo de caso"
+                                  aura:id="auraIdSelectType">
+                    
+                    <option text="Todos"></option>
+                    <aura:iteration items="{!v.CaseType}" var="type">
+                        
+                        <option text="{!type}"></option>
+                    </aura:iteration>
+                    
+                </lightning:select>
+            </lightning:layoutItem>
+            
+            <lightning:layoutItem>       
+                <lightning:select name="selectStatus" 
+                                  label="Estado"
+                                  aura:id="auraIdSelectStatus">
+                    
+                    <option text="Todos"></option>
+                    <aura:iteration items="{!v.CaseStatus}" var="status">
+                        <option text="{!status}"></option>
+                    </aura:iteration>
+                    
+                </lightning:select>
+            </lightning:layoutItem>
+            
+            <lightning:layoutItem>
+                <lightning:select name="selectPriority" 
+                                  label="Prioridad"
+                                  aura:id="auraIdSelectPriority">
+                    
+                    <option text="Todos"></option>
+                    <aura:iteration items="{!v.CasePriority}" var="priority">
+                        <option text="{!priority}"></option>
+                    </aura:iteration>
+                    
+                </lightning:select>
+            </lightning:layoutItem>
+            
+        </lightning:layout>
+        
+        <hr></hr>
+        <table>
+            <tr>
+                <td>
+                    <!--Y al final, añadimos los dos botones, Buscar y Nuevo caso, uno junto al otro. En caso de que el usuario actual
+					sea de perfil "Commercial", se saltará el Pop-up de elegir Record Type y pasará directamente crear el caso, con 
+					Record Type "Particular" por defecto -->
+                    <div align="center" draggable="false" >
+                        <lightning:button variant="brand" label="Buscar" onclick="{!c.buttonFind}" />
+                        
+                        <aura:if isTrue="{!v.currentUserProfile == 'Commercial'}">
+                            
+                            <lightning:button variant="brand" label="Nuevo caso" onclick="{!c.newModal}" />
+                            <aura:set attribute="else">
+                                <lightning:button variant="brand" label="Nuevo caso" onclick="{!c.buttonNewCase}" /> 
+                            </aura:set>
+                        </aura:if>
+                    </div>
+                </td>
+            </tr>
+        </table>
+        
+    </fieldset>
+    
+    <!-- Esta parte del código se encarga de mostrar el Pop-Up al pulsar en Nuevo caso
+  	(solo aparece cuando pulsemos el botón)donde nos pregunta con qué Record Type queremos
+  	crear el nuevo caso, ya que Salesforce no muestra está ventana por defecto como sí lo 
+  	hace desde la pestaña Case -->
+    <div role="dialog" tabindex="-1" aria-labelledby="header43" aura:id="Modalbox" class="slds-modal slds-modal_large">
+        <div class="slds-modal__container" style="width: 50%; height: 100%">
+            <div class="slds-modal__header">
+                Choose Record Type
+            </div>
+            <div class="slds-modal__content slds-p-around--medium">
+                
+                <lightning:radioGroup name="radioGroup"
+                                      label="Select Record Type"
+                                      options="{! v.CaseRecordType }"
+                                      value="{! v.CaseRecordTypeValue }"
+                                      type="radio"
+                                      onchange="{!c.CaseRecordChange}"
+                                      aura:id="auraIdSelectRecordType"/>
+            </div>
+            
+            <!--Aquí creamos un botón de Next en el Pop-Up, el cual cerrará el Pop-Up de
+      		Record Type y dará paso al Pop-up para crear el nuevo Caso -->
+            <div class="slds-modal__footer">
+                <lightning:button label="Close" onclick="{!c.closeModal}" />
+                <lightning:button variant="brand" label="Next" onclick="{!c.newModal}" />
+            </div>
+        </div>
+    </div>
+    
+    <div class="slds-backdrop " aura:id="Modalbackdrop"></div>   
+    
+</aura:component>
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+caseHeaderController.js
+----------------
+({
+    //Creamos el controller asociado a la clase Apex para que nos devuelva los datos de 
+    //Salesforce. Obtenemos una referencia al método remoto getCases de nuestra
+    //clase Apex, y hacemos la llamada al Callback. Si todo sale bien, añade a la
+    //lista que creamos en el componente el resultado del método getCases, o sea,
+    //las 10 incidencias ordenadas por fecha de cierre.
+    doInit: function(component, event, helper) {
+        
+/**   PARA EVITAR LLAMADAS EXCESIVAS A BASES DE DATOS, SE COMENTAN ESTOS HELPER
+  	  HASTA QUE TERMINEMOS CON LAS PRUEBAS
+     
+        helper.getTypePicklist(component);
+        helper.getStatusPicklist(component);
+        helper.getPriorityPicklist(component);
+        helper.getCurrentUserProfile(component);
+**/
+    },
+    
+    //Esta es la función del botón Buscar, que llama a su respectivo helper    
+    buttonFind: function(component, event, helper) {
+        helper.helpButtonFind(component);
+    },
+    
+    //Esta es la función del botón Nuevo Caso. Lo que hace es abrir un Pop-Up para que podamos elegir el
+    //Record Type que queremos asignarle al caso
+    buttonNewCase:function(component,event,helper) {
+        var cmpTarget = component.find('Modalbox');
+        var cmpBack = component.find('Modalbackdrop');
+        $A.util.addClass(cmpTarget, 'slds-fade-in-open');
+        $A.util.addClass(cmpBack, 'slds-backdrop--open'); 
+    },
+    
+    //Este controller actualizará en tiempo real qué RecordType estámos seleccionando
+    //en el Pop-up. Hará una llamada al método getRecordTypeID para obtener el
+    //RecordTypeID del elemento que tenemos seleccionado.
+    CaseRecordChange : function (component, event) {
+        var changeValue = event.getParam("CaseRecordTypeValue");
+        var caseRecordType = component.find("auraIdSelectRecordType").get("v.value");
+        var action = component.get("c.getRecordTipeID");
+        
+        action.setParams({
+            recordTypeName: caseRecordType
+        });
+        action.setCallback(this, function(response) {
+            var state = response.getState();
+            if (state === "SUCCESS") {
+                component.set("v.caseRecordTypeID",response.getReturnValue());
+                console.log(caseRecordType);
+            }
+        });
+        $A.enqueueAction(action);
+    },
+    
+    //Esta es la función que cierra el Pop-Up y abre otro para crear el nuevo caso, con el RecordType 
+    //que le hayamos asignado en el Pop-up anterior
+    newModal : function(component, event, helper) {
+        var createRecordEvent = $A.get("e.force:createRecord");
+        
+        var caseRecordTypeID = component.get("v.caseRecordTypeID");
+        createRecordEvent.setParams({
+            "entityApiName": "Case",
+            "recordTypeId": caseRecordTypeID
+        });
+        createRecordEvent.fire();
+        
+        var cmpTarget = component.find('Modalbox');
+        var cmpBack = component.find('Modalbackdrop');
+        $A.util.removeClass(cmpBack,'slds-backdrop--open');
+        $A.util.removeClass(cmpTarget, 'slds-fade-in-open');
+    },
+    
+    //Boton para cerrar el Pop-up
+    closeModal : function(component, event, helper) {
+        
+        var cmpTarget = component.find('Modalbox');
+        var cmpBack = component.find('Modalbackdrop');
+        $A.util.removeClass(cmpBack,'slds-backdrop--open');
+        $A.util.removeClass(cmpTarget, 'slds-fade-in-open');
+    }        
+})
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+caseHeaderHelper.js
+----------------
+({
+    //Este helper obtiene los valores que hayamos introducido en los campos del componente, los encapsula en un Array y los asocia al evento
+    //para enviarlo a la lista
+    helpButtonFind : function(component){
+        var caseName1 = component.get("v.CaseName1");
+        var CaseType = component.find("auraIdSelectType").get("v.value");
+        var caseStatus = component.find("auraIdSelectStatus").get("v.value");
+        var CasePriority = component.find("auraIdSelectPriority").get("v.value");
+        
+        var list = [caseName1, CaseType, caseStatus, CasePriority];
+        var findEvent = $A.get("e.c:caseEvent");
+        findEvent.setParams({"caseEvent" : list});
+        findEvent.fire();
+    },
+    
+    //Los siguientes helpers llaman a los métodos que obtienen los valores de Type, Status y Priority
+    getTypePicklist : function(component){
+        var action = component.get("c.getTypes");
+        action.setCallback(this, function(a) {
+            var state = a.getState();
+            if (state === "SUCCESS"){
+                component.set("v.CaseType", a.getReturnValue());
+            } 
+        });
+        $A.enqueueAction(action);
+    },
+    
+    getStatusPicklist : function(component){
+        var action = component.get("c.getStatus");
+        action.setCallback(this, function(a) {
+            var state = a.getState();
+            if (state === "SUCCESS"){
+                component.set("v.CaseStatus", a.getReturnValue());
+            } 
+        });
+        $A.enqueueAction(action);
+    },
+    
+    getPriorityPicklist : function(component){
+        var action = component.get("c.getPriority");
+        action.setCallback(this, function(a) {
+            var state = a.getState();
+            if (state === "SUCCESS"){
+                component.set("v.CasePriority", a.getReturnValue());
+            } 
+        });
+        $A.enqueueAction(action);
+    },
+    
+    //En este Helper obtenemos el perfil de nuestro usuario. En caso de que el usuario tenga un perfil "Commercial", asigna por defecto
+    //el Record Type a "Particular" cuando cree un nuevo caso
+    getCurrentUserProfile : function(component){
+        var action = component.get("c.getCurrentUserProfile");
+        action.setCallback(this, function(a) {
+            var state = a.getState();
+            if (state === "SUCCESS"){
+                component.set("v.currentUserProfile", a.getReturnValue());
+            }
+            if(a.getReturnValue() == 'Commercial'){
+                var action = component.get("c.getRecordTipeID");
+                
+                action.setParams({
+                    recordTypeName: "Particular"
+                });
+                action.setCallback(this, function(response) {
+                    var state = response.getState();
+                    if (state === "SUCCESS") {
+                        component.set("v.caseRecordTypeID",response.getReturnValue());
+                    }
+                });
+                $A.enqueueAction(action);
+            }
+        });
+        $A.enqueueAction(action);
+    }
+})
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+caseItem.cmp
+----------------
+<aura:component controller="CasesClass">
+    <aura:attribute name="item" type="Case"/>
+    <aura:attribute name="CaseType" type="String[]"/>
+    <aura:attribute name="CaseStatus" type="String[]"/>
+    <aura:attribute name="CasePriority" type="String[]"/>
+    
+    <aura:handler name="init" action="{!c.doInit}" value="{!this}"/>
+    
+    <aura:registerEvent name="findCase" type="c:caseEvent"/>
+    
+    <br/>
+    
+    <lightning:button class="detalles" variant="brand" label="Detalles" onclick="{!c.showDetails}"/>
+    
+    <div class="slds-grid">
+        <div class="slds-col">
+            <p>
+                <lightning:input type="number"
+                                 name="addDays"
+                                 
+                                 placeholder="Añadir días"
+                                 aura:id="auraIdAddDays"/>
+            </p>
+            
+            <p>   
+                <lightning:select name="selectStatus2"                             
+                                  aura:id="auraIdSelectStatus2">
+                    <option text="--Cambiar estado--"/>
+                    <option text="New"></option>
+                    <option text="Working"></option>
+                    <option text="Escalated"></option>
+                    <option text="Closed"></option>
+                    
+                    <!-- PARA EVITAR LLAMADAS EXCESIVAS A BASES DE DATOS, SE METERÁN LOS VALORES A MANO Y SE COMENTARÁ LA ITERACIÓN: 
+                   
+                    <aura:iteration items="{!v.CaseStatus}" var="status">
+                        <option text="{!status}"></option>
+                    </aura:iteration>
+-->
+                    
+                </lightning:select>
+            </p>
+        </div>
+        <div class="slds-col slds-size_0-of-5">
+            <br/>
+            
+            <p>
+                <lightning:buttonIcon name="AddDays" iconName="utility:add" onclick="{!c.addDays}"/></p>
+            <br/>
+            
+            <p><lightning:buttonIcon name="UpdateStatus" iconName="utility:send" onclick="{!c.updateOnlyStatus}"/></p>
+            
+        </div>
+        <br/>
+    </div>
+    <br/>
+    
+    <div role="dialog" tabindex="-1" aria-labelledby="header43" aura:id="Modalbox" class="slds-modal slds-modal_large">
+        <div class="slds-modal__container" style="width: 50%; height: 100%">
+            <div class="slds-modal__header">
+                CASO {!v.item.CaseNumber}
+            </div>
+            <div class="slds-modal__content slds-p-around--medium">
+                
+                
+                
+                <div class="slds-p-left_xx-large slds-p-right_xx-large">
+                    <div class="slds-page-header" style="padding-top: 9px; padding-bottom: 9px;, padding-right: 9px;, padding-left: 10px;">
+                        <h3 style="font-size: 1rem; text-align: center" title="">CASE DETAILS</h3>
+                    </div> 
+                </div>    
+                <div class="slds-grid slds-p-top_medium">
+                    <div class="slds-size_6-of-12 slds-p-left_xx-large slds-p-horizontal_x-large " >
+                        
+                        <lightning:input type="String"
+                                         label="Case Number"
+                                         name="CaseNumber"
+                                         readonly="true"
+                                         value="{!v.item.CaseNumber}" />
+                        
+                    </div>
+                    <div class="slds-size_5-of-12 slds-p-left_xx-small slds-p-horizontal_x-large " >
+                        <lightning:input label="Case Owner" name="CaseOwner" readonly="true"
+                                         value="{!v.item.Account.Name}" /> 
+                    </div>
+                </div>
+                <div class="slds-grid slds-p-top_x-small">
+                    <div class="slds-size_6-of-12 slds-p-left_xx-large slds-p-horizontal_x-large " >
+                        <lightning:select name="selectType" 
+                                          label="Type"
+                                          aura:id="auraIdSelectType">
+                            
+                            <option text="Mechanical"></option>
+                            <option text="Electrical"></option>
+                            <option text="Electronic"></option>
+                            <option text="Structural"></option>
+                            <option text="Other"></option>
+                            
+                            <!-- PARA EVITAR LLAMADAS EXCESIVAS A BASES DE DATOS, SE METERÁN LOS VALORES A MANO Y SE COMENTARÁ LA ITERACIÓN:
+                         
+                        <aura:iteration items="{!v.CaseType}" var="type">
+                            <option text="{!type}"></option>
+                        </aura:iteration>
+-->                        
+                            
+                        </lightning:select>
+                    </div>
+                    <div class="slds-size_5-of-12 slds-p-left_xx-small slds-p-horizontal_x-large " >
+                        <lightning:input type="date" label="Created Date" name="CreatedDate" value="{!v.item.CreatedDate}" readonly="true"/> 
+                    </div>
+                </div>
+                <div class="slds-grid slds-p-top_x-small">
+                    <div class="slds-size_6-of-12 slds-p-left_xx-large slds-p-horizontal_x-large " >
+                        <lightning:select name="selectStatus" 
+                                          label="Status"
+                                          aura:id="auraIdSelectStatus">
+                            
+                            <!-- PARA EVITAR LLAMADAS EXCESIVAS A BASES DE DATOS, SE METERÁN LOS VALORES A MANO Y SE COMENTARÁ LA ITERACIÓN:                        
+                        <aura:iteration items="{!v.CaseStatus}" var="status">
+                            <option text="{!status}"></option>
+                        </aura:iteration>
+-->                        
+                            
+                            <option text="New"></option>
+                            <option text="Working"></option>
+                            <option text="Escalated"></option>
+                            <option text="Closed"></option>
+                        </lightning:select>
+                    </div>
+                    
+                    <div class="slds-size_5-of-12 slds-p-left_xx-small slds-p-horizontal_x-large " >
+                        <lightning:input type="date" label="Close Date" name="Close_Date__c" value="{!v.item.Close_Date__c}" readonly="true"/> 
+                    </div>
+                </div>
+                <div class="slds-grid slds-p-top_x-small">
+                    <div class="slds-size_6-of-12 slds-p-left_xx-large slds-p-horizontal_x-large " >
+                        
+                        
+                        <!--PRIORITY COMO TEXT FIELD, PODEMOS PONER QUE SE MUESTRE PRIMERO EL TEXT FIELD, Y QUE AL 
+PULSAR EN EL BOTÓN DE EDITAR DE CADA CAMPO, CAMBIE AL PICKLIST
+                   
+                    <lightning:input type="String" 
+                                     name="Status"
+                                     value="{!v.item.Priority}" />
+-->  
+                        
+                        <lightning:select name="selectPriority" 
+                                          label="Priority"
+                                          aura:id="auraIdSelectPriority">
+                            
+                            <!-- PARA EVITAR LLAMADAS EXCESIVAS A BASES DE DATOS, SE METERÁN LOS VALORES A MANO Y SE COMENTARÁ LA ITERACIÓN:                            
+                            <aura:iteration items="{!v.CasePriority}" var="priority">
+                                <option text="{!priority}"></option>
+                            </aura:iteration>
+-->                      
+                            <option text="High"></option>
+                            <option text="Medium"></option>
+                            <option text="Low"></option>                            
+                        </lightning:select>
+                    </div>
+                    <div class="slds-size_5-of-12 slds-p-left_xx-small slds-p-horizontal_x-large " >
+                        <lightning:input label="Days to close" name="DaysToClose" value="{!v.item.Days_to_close__c}" readonly="true"/> 
+                    </div>
+                </div>
+            </div>
+            
+            <div class="slds-modal__footer">
+                <lightning:button label="Close" onclick="{!c.closeDetails}" />
+                <lightning:button label="Update" onclick="{!c.updateDetails}" />
+            </div>
+        </div>
+    </div>
+    <div class="slds-backdrop " aura:id="Modalbackdrop"></div>
+    
+</aura:component>
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+caseItemController.js
+----------------
+
+({
+    doInit: function(component, event, helper) {
+/**        	PARA EVITAR LLAMADAS EXCESIVAS A BASES DE DATOS, SE COMENTAN ESTOS 3 HELPER.
+			EN SU LUGAR, LOS VALORES SE METERAN A MANO, Y PARA MOSTRAR QUÉ VALOR TIENE
+            CADA ELEMENTO, SE USARÁN LAS 3 LLAMADAS DE ESTE MÉTODO (los component.find)
+
+        helper.getTypePicklist(component);
+        helper.getStatusPicklist(component);
+        helper.getPriorityPicklist(component);
+**/        
+        component.find("auraIdSelectType").set("v.value", component.get("v.item.Type"));
+        component.find("auraIdSelectStatus").set("v.value", component.get("v.item.Status"));
+        component.find("auraIdSelectPriority").set("v.value", component.get("v.item.Priority"));
+    },
+    
+    showDetails: function(component, event, helper) {
+        var cmpTarget = component.find('Modalbox');
+        var cmpBack = component.find('Modalbackdrop');
+        $A.util.addClass(cmpTarget, 'slds-fade-in-open');
+        $A.util.addClass(cmpBack, 'slds-backdrop--open'); 
+    },
+    
+    updateDetails: function(component, event, helper) {
+        var action = component.get("c.updateCase");
+        var caseType = component.find("auraIdSelectType").get("v.value");
+        var caseStatus = component.find("auraIdSelectStatus").get("v.value");
+        var casePriority = component.find("auraIdSelectPriority").get("v.value");
+        var originalCaseType = component.get("v.item.Type");
+        var originalCaseStatus = component.get("v.item.Status");
+        var originalCasePriority = component.get("v.item.Priority");
+        var validUpdate = false;
+        
+        if(caseType != originalCaseType){
+            component.set("v.item.Type", caseType);
+            validUpdate = true;
+        }
+        if(caseStatus != originalCaseStatus){
+            component.set("v.item.Status", caseStatus);
+            validUpdate = true;
+        }
+        if(casePriority != originalCasePriority){
+            component.set("v.item.Priority", casePriority);
+            validUpdate = true;
+        }
+        
+        var updateCase = component.get("v.item");
+        
+        if (validUpdate == true){
+            action.setParams({
+                cs: updateCase
+            });
+            action.setCallback(this, function(response){
+                var state = response.getState();
+                if (component.isValid() && state === "SUCCESS" && state != null) {
+                    alert("Caso " + component.get("v.item.CaseNumber") + " actualizado correctamente")
+                    var cmpTarget = component.find('Modalbox');
+                    var cmpBack = component.find('Modalbackdrop');
+                    $A.util.removeClass(cmpBack,'slds-backdrop--open');
+                    $A.util.removeClass(cmpTarget, 'slds-fade-in-open');
+                    helper.reloadList(component);
+                }
+            });
+            
+            $A.enqueueAction(action); 
+        }
+    },
+    
+    //Boton para cerrar el Pop-up
+    closeDetails : function(component, event, helper) {
+        
+        var cmpTarget = component.find('Modalbox');
+        var cmpBack = component.find('Modalbackdrop');
+        $A.util.removeClass(cmpBack,'slds-backdrop--open');
+        $A.util.removeClass(cmpTarget, 'slds-fade-in-open');
+    },
+    
+    addDays: function(component, event, helper) {
+
+        var action = component.get("c.updateCase");
+        var daysToAdd = component.find("auraIdAddDays").get("v.value");
+        component.set("v.item.Extra_Dates__c",daysToAdd);
+        
+        var updateCase = component.get("v.item");
+        action.setParams({
+            cs: updateCase
+        });
+        action.setCallback(this, function(response){
+            var state = response.getState();
+            if (component.isValid() && state === "SUCCESS" && state != null) {
+                alert("Estado del caso "+component.get("v.item.CaseNumber")+" cambiado con éxito");
+                helper.reloadList(component);
+            }
+        });
+        $A.enqueueAction(action); 
+    },
+    
+    updateOnlyStatus: function(component, event, helper) {
+        var action = component.get("c.updateCase");
+        var caseStatus = component.find("auraIdSelectStatus2").get("v.value");
+        var originalCaseStatus = component.get("v.item.Status");
+        var validUpdate = false;
+        console.log(caseStatus);
+        
+        if(caseStatus != originalCaseStatus && caseStatus != "--Cambiar estado--"){
+            
+            component.set("v.item.Status", caseStatus);
+            validUpdate = true;
+        }
+        var updateCase = component.get("v.item");
+        
+        if (validUpdate == true){
+            action.setParams({
+                cs: updateCase
+            });
+            action.setCallback(this, function(response){
+                var state = response.getState();
+                if (caseStatus!=originalCaseStatus && component.isValid() && state === "SUCCESS" && state != null) {
+                    alert("Estado del caso "+component.get("v.item.CaseNumber")+" cambiado con éxito");
+                    helper.reloadList(component);
+                }
+            });
+            $A.enqueueAction(action); 
+        }
+    }
+})
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+caseItemHelper.js
+----------------
+({
+    getTypePicklist : function(component){
+        var action = component.get("c.getTypes");
+        action.setCallback(this, function(a) {
+            var state = a.getState();
+            if (state === "SUCCESS"){
+                component.set("v.CaseType", a.getReturnValue());
+                window.setTimeout(
+                $A.getCallback( function() {
+                    component.find("auraIdSelectType").set("v.value", component.get("v.item.Type"));
+                }));
+            } 
+        });
+        $A.enqueueAction(action);
+    },
+    
+    getStatusPicklist : function(component){
+        var action = component.get("c.getStatus");
+        action.setCallback(this, function(a) {
+            var state = a.getState();
+            if (state === "SUCCESS"){
+                component.set("v.CaseStatus", a.getReturnValue());
+                window.setTimeout(
+                $A.getCallback( function() {
+                    component.find("auraIdSelectStatus").set("v.value", component.get("v.item.Status"));
+                    //component.find("auraIdSelectStatus2").set("v.value", component.get("v.item.Status"));
+                }));
+            } 
+        });
+        $A.enqueueAction(action);
+    },
+    
+    getPriorityPicklist : function(component){
+        var action = component.get("c.getPriority");
+        action.setCallback(this, function(a) {
+            var state = a.getState();
+            var ret = a.getReturnValue();
+            if (state === "SUCCESS"){
+                component.set("v.CasePriority", a.getReturnValue());
+                window.setTimeout(
+                $A.getCallback( function() {
+                    component.find("auraIdSelectPriority").set("v.value", component.get("v.item.Priority"));
+                }));
+            } 
+        });
+        $A.enqueueAction(action);
+    },
+    
+    reloadList : function(component){
+		var list = ["", "Todos", "Todos", "Todos"];
+        var findEvent = $A.get("e.c:caseEvent");
+        findEvent.setParams({"caseEvent" : list});
+        findEvent.fire();
+    }            
+})
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+caseItem.css
+----------------
+.THIS.detalles {
+width: 100%;
+}
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
